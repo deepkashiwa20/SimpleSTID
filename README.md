@@ -1,5 +1,10 @@
-<<<<<<< HEAD
 # SimpleSTID
-=======
-This is README!
->>>>>>> connection test commit
+
+This is a STID implementation to train over a large sparse dataset.
+
+### Training Cmd
+
+```
+python3 traintest.py
+```
+
