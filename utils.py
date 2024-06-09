@@ -1,3 +1,6 @@
+import numpy as np
+import torch
+
 def masked_mse(preds, labels, null_val=1e-3):
     if np.isnan(null_val):
         mask = ~torch.isnan(labels)
@@ -41,3 +44,11 @@ def masked_mape(preds, labels, null_val=1e-3):
     loss = loss * mask
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
     return torch.mean(loss)
+
+
+class MaskedMAELoss:
+    def _get_name(self):
+        return self.__class__.__name__
+
+    def __call__(self, preds, labels, null_val=1e-3):
+        return masked_mae(preds, labels, null_val)
