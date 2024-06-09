@@ -2,14 +2,24 @@
 
 This is a STID implementation to train over a large sparse dataset.
 
-### Training Cmd
+## Status_20240610
+### Done
+- Basic "train" script
+### Todo
+- Data Processing/Adapter
+- Model Saving 
+- Result Plot
+- LossFunction API
+- Parameter settings
+
+## Training Cmd
 
 ```
 python3 traintest.py
 ```
 
 ## Result
-| Model/METRLA  |  MAE | Step12  |
-|-------|-------|-------|
-| STID | 2.8759 | - |
+| Step12  |  MAE |  RMSE | MAPE ｜
+|-------|-------|-------|-------| 
+| STID | 2.8759 | - | -|
 
