@@ -3,37 +3,18 @@ import os
 import sys
 import logging
 import gpustat
+import time
 from datetime import datetime
 
 import numpy as np
 import torch
 from torch import nn
 from torchinfo import summary
-from utils import masked_mse, masked_rmse, masked_mae, masked_mape, MaskedMAELoss
+from utils import *
+from dataProcess import *
+
 import STID
-import pickle
-
-class StandardScaler:
-    """
-    Standard the input
-    https://github.com/nnzhan/Graph-WaveNet/blob/master/util.py
-    """
-
-    def __init__(self, mean=None, std=None):
-        self.mean = mean
-        self.std = std
-
-    def fit_transform(self, data):
-        self.mean = data.mean()
-        self.std = data.std()
-
-        return (data - self.mean) / self.std
-
-    def transform(self, data):
-        return (data - self.mean) / self.std
-
-    def inverse_transform(self, data):
-        return (data * self.std) + self.mean
+# import pickle
 
 class EarlyStopping:
     def __init__(self, patience=10, verbose=False, delta=0):
@@ -76,6 +57,7 @@ class EarlyStopping:
         torch.save(model.state_dict(), f'{MODEL_NAME}_checkpoint.pt')
         self.val_loss_min = val_loss
 
+
 @torch.no_grad()
 def model_evaluate(model, dataLoader, criterion, debug=False):
     model.eval()
@@ -113,7 +95,27 @@ def model_evaluate(model, dataLoader, criterion, debug=False):
 
 @torch.no_grad()
 def model_predict(model, dataLoader):
-    pass
+    y_pred, y_true = [], []
+    for x_batch, y_batch in dataLoader:
+        x_batch = x_batch.to(DEVICE)
+        y_batch = y_batch.to(DEVICE)
+
+        out_batch = model(x_batch)
+        
+        out_batch = SCALER.inverse_transform(out_batch)
+        # y_batch = SCALER.inverse_transform(y_batch)
+        
+        out_batch = out_batch.cpu().numpy()
+        y_batch = y_batch.cpu().numpy()
+        
+        y_true.append(y_batch)
+        y_pred.append(out_batch)
+
+    y_true = np.vstack(y_true).squeeze()
+    y_pred = np.vstack(y_pred).squeeze()
+    
+    return y_pred, y_true
+
 
 def oneStepForward(model, dataLoader, optimizer, scheduler, criterion):
     model.train()
@@ -167,6 +169,28 @@ def model_train(model, trainLoader, valLoader, optimizer, scheduler, criterion,
             
     return model
 
+@torch.no_grad()
+def model_test(model, dataLoader, logger=None):
+    model.eval()
+
+    if logger:
+        logger.info("--------- Test ---------")
+
+    start_time = time.time()
+    y_pred, y_true = model_predict(model, dataLoader)
+    end_time = time.time()
+
+    rmse_all, mae_all, mape_all = getMetric(y_pred, y_true)
+    if logger:
+        logger.info(f"All steps RMSE = {rmse_all:.5f}, MAE = {mae_all:.5f}, MAPE = {mape_all:.5f}\n")
+
+    for i in range(y_pred.shape[1]):
+        rmse, mae, mape = getMetric(y_pred[:, i, :], y_true[:, i, :])
+        if logger:
+            logger.info(f"--- Step {i+1} RMSE = {rmse:.5f}, MAE = {mae:.5f}, MAPE = {mape:.5f}\n")
+
+    logger.info(f"Inference time:{(end_time - start_time):.2f}s.")
+    
 
 def model_save(model):
     pass
@@ -175,6 +199,8 @@ def model_save(model):
 def metric_plot():
     pass
 
+
+
 def select_gpu():
     mem = []
     gpus = list(set(range(torch.cuda.device_count()))) # list(set(X)) is done to shuffle the array
@@ -182,7 +208,8 @@ def select_gpu():
         gpu_stats = gpustat.GPUStatCollection.new_query()
         mem.append(gpu_stats.jsonify()["gpus"][i]["memory.used"])
     return str(gpus[np.argmin(mem)])
-    
+
+
 if __name__ == "__main__":
     """
     INITIALIZATION
@@ -192,20 +219,26 @@ if __name__ == "__main__":
     print("Model Initialization...")
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default="STID", help='Model name to save output in file')
+    parser.add_argument('-s', '--step', default=12, type=int, help='Step to predict (*5 minute).')
     parser.add_argument('-n', '--node', type=int, default=207, help='Number of node in the dataset.')
+    parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of batches to train in each epoch.')
     parser.add_argument('-d','--dataset', type=str, default='METRLA')
     parser.add_argument('--gpu', default=-1, type=int, help='ID of the gpu to run on. -1(default) means GPU with most free memory will be chosen.')
     parser.add_argument('--verbose', default=1, type=int, help='Default is 1, if you donn\'t want any log, please / set verbose to 0.')
+    
 
     args = parser.parse_args()
-    
     MODEL_NAME = args.model
+    print(MODEL_NAME)
+    STEP = args.step
     print(args.dataset)
     DATASET = args.dataset
+    BATCH_SIZE = args.batch_size
     
     current_time = datetime.now()
-    formatted_time = current_time.strftime("%y%m%d%H")
-    logging.basicConfig(level=logging.INFO, filename=f"./logs/{formatted_time}_{MODEL_NAME}_{DATASET}_training.log", filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
+    formatted_time = current_time.strftime("%y%m%d%H%M")
+    log_file = f"./logs/{formatted_time}_{MODEL_NAME}_{DATASET}_training.log"
+    logging.basicConfig(level=logging.INFO, filename=log_file, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger()
 
     
@@ -216,11 +249,12 @@ if __name__ == "__main__":
     
     print(f"Loading {DATASET} dataset...")
     #Data Loading
+    trainLoader, valLoader, testLoader, SCALER = generate_train_val_test('./data/METRLA/metr-la.h5', batch_size=BATCH_SIZE, step=STEP)
     
     
     
     # Model initializaiton
-    model = STID.STID(207).to(DEVICE)
+    model = STID.STID(207, input_len=STEP, output_len=STEP).to(DEVICE)
 
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -231,11 +265,11 @@ if __name__ == "__main__":
 
     print(f"{MODEL_NAME} initialization is finished.")
 
-    criterion = MaskedMAELoss()
+    criterion = myLoss()
     
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=1e-3,
+        lr=2e-3,
         weight_decay=3e-4,
         eps=1e-8,
     )
@@ -248,18 +282,21 @@ if __name__ == "__main__":
     )
     
     early_stopping = EarlyStopping()
-    with open('data.pkl', 'rb') as f:
-        trainLoader, valLoader, testLoader, SCALER = pickle.load(f)
+    
+    # with open('data.pkl', 'rb') as f:
+    #     trainLoader, valLoader, testLoader, SCALER = pickle.load(f)
     
     """
     MODEL TRANING
     """
+    
     model = model_train(
         model, trainLoader, valLoader, optimizer, scheduler, criterion, early_stopping=early_stopping, logger=logger
     )
-
-    print('Traning is over!')
     
+    print('Tranning is over!')
+    
+    model_test(model, testLoader, logger=logger)
     
     
     
