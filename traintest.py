@@ -5,6 +5,8 @@ import logging
 import gpustat
 import time
 from datetime import datetime
+import pytz
+import json
 
 import numpy as np
 import torch
@@ -15,9 +17,8 @@ from dataProcess import *
 
 import STID
 
-
 class EarlyStopping:
-    def __init__(self, patience=10, verbose=False, delta=0):
+    def __init__(self, patience=10, verbose=False, delta=1e-4):
         """
         Args:
             patience (int): How long to wait after last time validation loss improved.
@@ -41,7 +42,7 @@ class EarlyStopping:
         if self.best_score is None:
             self.best_score = score
             self.save_checkpoint(val_loss, model)
-        elif score < self.best_score + self.delta:
+        elif score <= self.best_score + self.delta:
             self.counter += 1
             if self.counter >= self.patience:
                 self.early_stop = True
@@ -54,7 +55,7 @@ class EarlyStopping:
         '''Saves model when validation loss decrease.'''
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), f'{formatted_time}_{MODEL_NAME}_{DATASET}_checkpoint.pt')
+        torch.save(model.state_dict(), f'{SAVING_PATH}/{MODEL_NAME}_{DATASET}_{LOSS}_EarlyStop.pt')
         self.val_loss_min = val_loss
 
 
@@ -70,7 +71,7 @@ def model_evaluate(model, dataLoader, criterion, debug=False):
 
         out_batch = model(x_batch)
         out_batch = SCALER.inverse_transform(out_batch)
-        loss = criterion(out_batch, y_batch)
+        loss = criterion(out_batch, y_batch, NULL_VAL)
         batch_losses.append(loss.item())
 
         if not debug:
@@ -103,7 +104,6 @@ def model_predict(model, dataLoader):
         out_batch = model(x_batch)
         
         out_batch = SCALER.inverse_transform(out_batch)
-        # y_batch = SCALER.inverse_transform(y_batch)
         
         out_batch = out_batch.cpu().numpy()
         y_batch = y_batch.cpu().numpy()
@@ -113,7 +113,6 @@ def model_predict(model, dataLoader):
 
     y_true = np.vstack(y_true).squeeze()
     y_pred = np.vstack(y_pred).squeeze()
-    
     return y_pred, y_true
 
 
@@ -128,7 +127,7 @@ def oneStepForward(model, dataLoader, optimizer, scheduler, criterion):
         out_batch = model(x_batch)
         out_batch = SCALER.inverse_transform(out_batch)
 
-        loss = criterion(out_batch, y_batch)
+        loss = criterion(out_batch, y_batch, NULL_VAL)
         batch_losses.append(loss.item())
 
         optimizer.zero_grad()
@@ -143,7 +142,7 @@ def oneStepForward(model, dataLoader, optimizer, scheduler, criterion):
     
 
 def model_train(model, trainLoader, valLoader, optimizer, scheduler, criterion,
-                epochs=200, early_stopping=None, compile_model=True, verbose=1, logger=None, plot=False, save=False):
+                epochs=200, early_stopping=None, compile_model=True, verbose=1, logger=None, plot=True, save=False):
 
     if torch.__version__ >= "2.0.0" and compile_model:
         model = torch.compile(model)
@@ -164,9 +163,15 @@ def model_train(model, trainLoader, valLoader, optimizer, scheduler, criterion,
         
         if early_stopping.early_stop:
             print("Early stopping")
-            model.load_state_dict(torch.load(f'{formatted_time}_{MODEL_NAME}_{DATASET}_checkpoint.pt'))
+            model.load_state_dict(torch.load(f'{SAVING_PATH}/{MODEL_NAME}_{DATASET}_{LOSS}_EarlyStop.pt'))
             break
             
+    if not early_stopping.early_stop:
+        torch.save(model.state_dict(), f'{SAVING_PATH}/{MODEL_NAME}_{DATASET}_{LOSS}.pth') 
+
+    if plot:
+        metric_plot(train_losses, val_losses)
+    
     return model
 
 @torch.no_grad()
@@ -174,31 +179,52 @@ def model_test(model, dataLoader, logger=None):
     model.eval()
 
     if logger:
-        logger.info("--------- Test ---------")
+        logger.info("--------- Model Test ---------")
 
     start_time = time.time()
     y_pred, y_true = model_predict(model, dataLoader)
     end_time = time.time()
+    np.save(f"{SAVING_PATH}/TrueVal.npy", y_true)
+    np.save(f"{SAVING_PATH}/PredVal.npy", y_pred)
 
-    rmse_all, mae_all, mape_all = getMetric(y_pred, y_true)
+    rmse_all, mae_all, mape_all = getMetric(y_pred, y_true, NULL_VAL)
     if logger:
         logger.info(f"All steps RMSE = {rmse_all:.5f}, MAE = {mae_all:.5f}, MAPE = {mape_all:.5f}\n")
 
     for i in range(y_pred.shape[1]):
-        rmse, mae, mape = getMetric(y_pred[:, i, :], y_true[:, i, :])
+        rmse, mae, mape = getMetric(y_pred[:, i, :], y_true[:, i, :], NULL_VAL)
         if logger:
             logger.info(f"--- Step {i+1} RMSE = {rmse:.5f}, MAE = {mae:.5f}, MAPE = {mape:.5f}\n")
 
     logger.info(f"Inference time:{(end_time - start_time):.2f}s.")
     
+        
+    
+def metric_plot(train_losses, val_losses):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    sns.set_style("darkgrid")
+    sns.set_context("paper")
+    plt.figure(figsize=(59, 6))
 
-def model_save(model):
-    pass
+    data = pd.DataFrame({
+        'iteration': range(len(train_losses)),
+        'train_loss': train_losses,
+        'val_loss': val_losses
+    })
+    
+    sns.lineplot(data=data, x='iteration', y='train_loss', label='train_loss', marker='x')
+    sns.lineplot(data=data, x='iteration', y='val_loss', label='val_loss', marker='o')
+    plt.xlabel("iteration", fontsize=14)
+    plt.ylabel("Loss", fontsize=14)
+    plt.legend(title='Function', title_fontsize='13', fontsize='11')
+    plt.savefig(f'{SAVING_PATH}/loss.png')
 
 
-def metric_plot():
-    pass
-
+def save_args_to_file(args):
+    with open(f'{SAVING_PATH}/PARAS.json', 'w') as f:
+        json.dump(vars(args), f, indent=4) 
 
 
 def select_gpu():
@@ -219,13 +245,16 @@ if __name__ == "__main__":
     print("Model Initialization...")
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default="STID", help='Model name to save output in file')
-    parser.add_argument('-d','--dataset', type=str, default='METRLA', help='Data folder contains x.h5 or x.csv file.')
-    parser.add_argument('-n', '--node', type=int, default=207, help='Number of node in the dataset.')
     parser.add_argument('-s', '--step', default=12, type=int, help='Step to predict (*5 minute).')
-    parser.add_argument('--dim', type=int, default=32, help='Embedding dim for features, e.g., node, speed, etc.')
+    parser.add_argument('-n', '--node', type=int, default=2084, help='Number of node in the dataset.')
     parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of batches to train in each epoch.')
+    parser.add_argument('-d','--dataset', type=str, default='METRLA', help='Dataset name.')
+    parser.add_argument('--data_path', type=str, default='./data/METRLA/metr-la.h5', help='File path of dataset file')
+    parser.add_argument('--null', type=float, default=1e-3, help="Null val to ignore.")
     parser.add_argument('--gpu', default=-1, type=int, help='ID of the gpu to run on. -1(default) means GPU with most free memory will be chosen.')
     parser.add_argument('--verbose', default=1, type=int, help='Default is 1, if you donn\'t want any log, please / set verbose to 0.')
+    parser.add_argument('-l', "--loss", type=str, default='MAE', help='MAE, MSE, RMSE, MAPE, Hyrbrid')
+    parser.add_argument('-c', "--coeffcient", type=float, default=0.01, help='HYBRID coeffcient, e.g. a * MAE + MAPE.')
     
 
     args = parser.parse_args()
@@ -233,11 +262,27 @@ if __name__ == "__main__":
     NODES = args.node
     STEP = args.step
     DATASET = args.dataset
+    DATA_PATH = args.data_path
     BATCH_SIZE = args.batch_size
-    EMB_DIM = args.dim
+    NULL_VAL = args.null
+    LOSS = args.loss
     
-    current_time = datetime.now()
-    formatted_time = current_time.strftime("%y%m%d%H%M")
+    
+    current_time = datetime.now(pytz.utc)
+    tokyo_timezone = pytz.timezone('Asia/Tokyo')
+    current_time = current_time.astimezone(tokyo_timezone)
+    formatted_time = current_time.strftime("%y%m%d%H%M%S")
+    
+    SAVING_PATH = f"./saved_models/{MODEL_NAME}_{DATASET}_{formatted_time}"
+    
+    if not os.path.exists(SAVING_PATH):
+        os.makedirs(SAVING_PATH)
+    
+    if not os.path.exists('./logs'):
+        os.makedirs('./logs')
+
+    save_args_to_file(args)
+    
     log_file = f"./logs/{formatted_time}_{MODEL_NAME}_{DATASET}_training.log"
     logging.basicConfig(level=logging.INFO, filename=log_file, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger()
@@ -247,31 +292,22 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = f"{GPU_ID}"
     DEVICE = torch.device(f"cuda:{GPU_ID}" if torch.cuda.is_available() else "cpu")
 
-    
-    print(f"Loading {DATASET} dataset...")
     #Data Loading
-    trainLoader, valLoader, testLoader, SCALER = generate_train_val_test('kochi_oct.csv', batch_size=BATCH_SIZE, step=STEP)
-    
+    print(f"Loading dataset located in {DATASET} ...")
+    trainLoader, valLoader, testLoader, SCALER = generate_train_val_test(DATA_PATH, batch_size=BATCH_SIZE, step=STEP)
     
     
     # Model initializaiton
-    model = STID.STID(2084, input_len=STEP, output_len=STEP).to(DEVICE)
+    model = STID.STID(NODES, input_len=STEP, output_len=STEP).to(DEVICE)
+
+    print(f"{MODEL_NAME} initialization is finished.")
+
+    criterion = myLoss(LOSS)
 
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=1e-3,
-        weight_decay=0.0003,
-        eps=1e-8,
-    )
-
-    print(f"{MODEL_NAME} initialization is finished.")
-
-    criterion = myLoss()
-    
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=2e-3,
-        weight_decay=3e-4,
+        weight_decay=0.0008,
         eps=1e-8,
     )
     
@@ -279,7 +315,6 @@ if __name__ == "__main__":
         optimizer,
         milestones=[20,30],
         gamma=0.1,
-        verbose=False,
     )
     
     early_stopping = EarlyStopping()
@@ -292,9 +327,10 @@ if __name__ == "__main__":
         model, trainLoader, valLoader, optimizer, scheduler, criterion, early_stopping=early_stopping, logger=logger
     )
     
-    print('Tranning is over!')
+    print('Tranning is over, test starts...')
     
     model_test(model, testLoader, logger=logger)
-    
+
+    print('Testing is over!')
     
     
