@@ -88,9 +88,8 @@ def generate_train_val_test(data_path, batch_size=16, step=12, time_in_day=True,
     """
 
     if data_path[-4:] == '.csv':
-        df = pd.read_csv(data_path)
-
-        
+        df = pd.read_csv(data_path, index_col='Unnamed: 0')
+        df.index = pd.to_datetime(df.index)
     else:
         df = pd.read_hdf(data_path)
 

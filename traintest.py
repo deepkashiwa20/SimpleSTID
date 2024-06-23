@@ -14,7 +14,7 @@ from utils import *
 from dataProcess import *
 
 import STID
-# import pickle
+
 
 class EarlyStopping:
     def __init__(self, patience=10, verbose=False, delta=0):
@@ -54,7 +54,7 @@ class EarlyStopping:
         '''Saves model when validation loss decrease.'''
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), f'{MODEL_NAME}_checkpoint.pt')
+        torch.save(model.state_dict(), f'{formatted_time}_{MODEL_NAME}_{DATASET}_checkpoint.pt')
         self.val_loss_min = val_loss
 
 
@@ -164,7 +164,7 @@ def model_train(model, trainLoader, valLoader, optimizer, scheduler, criterion,
         
         if early_stopping.early_stop:
             print("Early stopping")
-            model.load_state_dict(torch.load(f'{MODEL_NAME}_checkpoint.pt'))
+            model.load_state_dict(torch.load(f'{formatted_time}_{MODEL_NAME}_{DATASET}_checkpoint.pt'))
             break
             
     return model
@@ -219,21 +219,22 @@ if __name__ == "__main__":
     print("Model Initialization...")
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default="STID", help='Model name to save output in file')
-    parser.add_argument('-s', '--step', default=12, type=int, help='Step to predict (*5 minute).')
+    parser.add_argument('-d','--dataset', type=str, default='METRLA', help='Data folder contains x.h5 or x.csv file.')
     parser.add_argument('-n', '--node', type=int, default=207, help='Number of node in the dataset.')
+    parser.add_argument('-s', '--step', default=12, type=int, help='Step to predict (*5 minute).')
+    parser.add_argument('--dim', type=int, default=32, help='Embedding dim for features, e.g., node, speed, etc.')
     parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of batches to train in each epoch.')
-    parser.add_argument('-d','--dataset', type=str, default='METRLA')
     parser.add_argument('--gpu', default=-1, type=int, help='ID of the gpu to run on. -1(default) means GPU with most free memory will be chosen.')
     parser.add_argument('--verbose', default=1, type=int, help='Default is 1, if you donn\'t want any log, please / set verbose to 0.')
     
 
     args = parser.parse_args()
     MODEL_NAME = args.model
-    print(MODEL_NAME)
+    NODES = args.node
     STEP = args.step
-    print(args.dataset)
     DATASET = args.dataset
     BATCH_SIZE = args.batch_size
+    EMB_DIM = args.dim
     
     current_time = datetime.now()
     formatted_time = current_time.strftime("%y%m%d%H%M")
@@ -249,12 +250,12 @@ if __name__ == "__main__":
     
     print(f"Loading {DATASET} dataset...")
     #Data Loading
-    trainLoader, valLoader, testLoader, SCALER = generate_train_val_test('./data/METRLA/metr-la.h5', batch_size=BATCH_SIZE, step=STEP)
+    trainLoader, valLoader, testLoader, SCALER = generate_train_val_test('kochi_oct.csv', batch_size=BATCH_SIZE, step=STEP)
     
     
     
     # Model initializaiton
-    model = STID.STID(207, input_len=STEP, output_len=STEP).to(DEVICE)
+    model = STID.STID(2084, input_len=STEP, output_len=STEP).to(DEVICE)
 
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -282,9 +283,6 @@ if __name__ == "__main__":
     )
     
     early_stopping = EarlyStopping()
-    
-    # with open('data.pkl', 'rb') as f:
-    #     trainLoader, valLoader, testLoader, SCALER = pickle.load(f)
     
     """
     MODEL TRANING

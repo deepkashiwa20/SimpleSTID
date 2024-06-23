@@ -1,15 +1,15 @@
 import numpy as np
 import torch
 
-def getMetric(y_pred, y_true):
+def getMetric(y_pred, y_true, null_val=0):
     if isinstance(y_pred, np.ndarray):
         y_pred = torch.tensor(y_pred)
     if isinstance(y_true, np.ndarray):
         y_true = torch.tensor(y_true)
         
-    rmse = masked_rmse(y_pred, y_true)
-    mae = masked_mae(y_pred, y_true)
-    mape = masked_mape(y_pred, y_true)
+    rmse = masked_rmse(y_pred, y_true, null_vall)
+    mae = masked_mae(y_pred, y_true, null_vall)
+    mape = masked_mape(y_pred, y_true, null_vall)
 
     return rmse, mae, mape
 
@@ -63,5 +63,5 @@ class myLoss:
     def _get_name(self):
         return self.__class__.__name__
 
-    def __call__(self, preds, labels, null_val=1e-3):
+    def __call__(self, preds, labels, null_val=1.8e-3):
         return masked_mae(preds, labels, null_val)
