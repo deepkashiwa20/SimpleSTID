@@ -246,7 +246,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default="STID", help='Model name to save output in file')
     parser.add_argument('-s', '--step', default=12, type=int, help='Step to predict (*5 minute).')
-    parser.add_argument('-n', '--node', type=int, default=2084, help='Number of node in the dataset.')
+    parser.add_argument('-n', '--node', type=int, default=207, help='Number of node in the dataset.')
     parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of batches to train in each epoch.')
     parser.add_argument('-d','--dataset', type=str, default='METRLA', help='Dataset name.')
     parser.add_argument('--data_path', type=str, default='./data/METRLA/metr-la.h5', help='File path of dataset file')
