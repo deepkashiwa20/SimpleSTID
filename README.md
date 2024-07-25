@@ -21,7 +21,17 @@ python3 traintest.py
 ```
 
 ### Parameters
+- --model, model name, used to save the temporary results/models
 - -n, --nodes, Number of nodes in the dataset
+- -s, --step, Steps to predict (1 step = 5 mintues)
+- -b, --batch_size, number of batches to train in each epoch
+- -d --dataset, dataset name, used to save the temporary results/models
+- --data_path, File path to the dataset, only support ".h5" file and ".csv" file.
+- --null, null value filter (float).
+- --gpu, GPU ID to run, default is -1 which means the GPU with most free memory.
+- --verbose, NOT IMPLEMENTED YET.
+- -l, --loss, "MAE, MSE, RMSE, MAPE and HYBRID" (MAE+MAPE) are supported.
+- -c, --coefficient, hybrid coeffcient, for example, c*MAE+MAPE.
 
 ## Result
 | Step3 | MAE   | RMSE  | MAPE  |
