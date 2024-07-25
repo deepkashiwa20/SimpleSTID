@@ -20,6 +20,9 @@ This is a STID implementation to train over a large sparse dataset.
 python3 traintest.py
 ```
 
+### Parameters
+- -n, --nodes, Number of nodes in the dataset
+
 ## Result
 | Step3 | MAE   | RMSE  | MAPE  |
 | ----- | ----- | ----- | ----- |
